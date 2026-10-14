@@ -1,0 +1,54 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Check if user is authenticated
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    // Get user profile data
+    function getUserRole() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role;
+    }
+
+    // users collection
+    match /users/{userId} {
+      allow read, write: if isAuthenticated() && request.auth.uid == userId;
+    }
+
+    // work_orders collection
+    match /work_orders/{orderId} {
+      // Anyone authenticated can read open work orders.
+      // Or they can read if it's their own work order.
+      allow read: if isAuthenticated() && (resource.data.status == 'open' || resource.data.customerId == request.auth.uid || getUserRole() == 'Bidder');
+      
+      // Only Customers can create work orders
+      allow create: if isAuthenticated() && getUserRole() == 'Customer' && request.resource.data.customerId == request.auth.uid;
+      
+      // Only the Customer who owns the order can update it (e.g. status)
+      allow update: if isAuthenticated() && resource.data.customerId == request.auth.uid;
+      
+      allow delete: if false;
+    }
+
+    // bids collection
+    match /bids/{bidId} {
+      // Bidders can read their own bids.
+      // Customers can read bids for their own work orders.
+      allow read: if isAuthenticated() && (
+        resource.data.bidderId == request.auth.uid || 
+        get(/databases/$(database)/documents/work_orders/$(resource.data.workOrderId)).data.customerId == request.auth.uid
+      );
+      
+      // Bidders can create bids
+      allow create: if isAuthenticated() && getUserRole() == 'Bidder' && request.resource.data.bidderId == request.auth.uid;
+      
+      // Only Customers can update bid status (to accepted/rejected)
+      allow update: if isAuthenticated() && get(/databases/$(database)/documents/work_orders/$(resource.data.workOrderId)).data.customerId == request.auth.uid;
+      
+      allow delete: if false;
+    }
+  }
+}
